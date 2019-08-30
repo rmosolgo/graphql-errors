@@ -23,20 +23,11 @@ module GraphQL
 
     def instrument(_type, field)
       old_resolve_proc = field.resolve_proc
-
-      new_resolve_proc = lambda do |obj, args, ctx|
-        wrap_proc(obj, args, ctx, old_resolve_proc)
-      end
-
       old_lazy_resolve_proc = field.lazy_resolve_proc
-
-      new_lazy_resolve_proc = lambda do |obj, args, ctx|
-        wrap_proc(obj, args, ctx, old_lazy_resolve_proc)
-      end
-
+      errors = self
       field.redefine do
-        resolve(new_resolve_proc)
-        lazy_resolve(new_lazy_resolve_proc)
+        resolve(ErrorWrapper.new(old_resolve_proc, errors))
+        lazy_resolve(ErrorWrapper.new(old_lazy_resolve_proc, errors))
       end
     end
 
@@ -49,19 +40,23 @@ module GraphQL
       end
     end
 
-    private
+    class ErrorWrapper
+      def initialize(old_proc, errors)
+        @old_proc = old_proc
+        @errors = errors
+      end
 
-    def wrap_proc(object, arguments, context, old_proc)
-      begin
-        old_proc.call(object, arguments, context)
+      def call(obj, args, ctx)
+        @old_proc.call(obj, args, ctx)
       rescue => exception
-        if handler = find_handler(exception)
-          handler.call(exception, object, arguments, context)
+        if handler = @errors.find_handler(exception)
+          handler.call(exception, obj, args, ctx)
         else
           raise exception
         end
       end
     end
+
 
     def find_handler(exception)
       @handler_by_class.each do |klass, handler|
